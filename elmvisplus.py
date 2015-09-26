@@ -8,12 +8,12 @@ Created on Wed Aug 19 13:52:14 2015
 import numpy as np
 import hpelm
 from elmvis_ga import GA
-#from elmvisopt import opt
-from elmvis_python import opt
+from elmvisopt import opt
+#from elmvis_python import opt
 
 iter = 10000000
 stall = 10000
-report = 10000
+report = 100000
 
 
 X = np.genfromtxt("DATA.txt", delimiter=',')

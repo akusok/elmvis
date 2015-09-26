@@ -61,7 +61,7 @@ def opt(np.ndarray[np.float64_t, ndim=2] Yin,
     cdef np.ndarray[np.float64_t, ndim=1] delta2 = np.empty(d, dtype=np.float64)
     cdef np.ndarray[np.float64_t, ndim=1] a1
     cdef np.ndarray[np.float64_t, ndim=1] a2
-    cdef double swap, bests, sdiff, rootmstall = maxstall**0.5
+    cdef double swap, bests, sdiff, rootmstall = maxstall**0.5, t1, t2, sdiff2
  
     bests = s.sum()
     
@@ -85,15 +85,22 @@ def opt(np.ndarray[np.float64_t, ndim=2] Yin,
             delta2[j] = y1[j] - y2[j]
 
             
-        a1 = np.dot(A[i1, :], Y)
+#        a1 = np.dot(A[i1, :], Y)
+#        for j in range(d):
+#            sdiff += (A[i1, i1]*delta1[j] + 2*a1[j])*delta1[j]
+#
+#        a2 = np.dot(A[i2, :], Y) + A[i2, i1]*delta1
+#        for j in range(d):
+#            sdiff += (A[i2, i2]*delta2[j] + 2*a2[j])*delta2[j]
+
         for j in range(d):
-            sdiff += (A[i1, i1]*delta1[j] + 2*a1[j])*delta1[j]
-
-
-        a2 = np.dot(A[i2, :], Y) + A[i2, i1]*delta1
-        for j in range(d):
-            sdiff += (A[i2, i2]*delta2[j] + 2*a2[j])*delta2[j]
-
+            t1 = 0
+            t2 = A[i2, i1]*delta1[j]
+            for k in range(N):
+                t1 += A[i1, k]*Y[k, j]
+                t2 += A[i2, k]*Y[k, j]
+            sdiff += (A[i1, i1]*delta1[j] + 2*t1)*delta1[j]
+            sdiff += (A[i2, i2]*delta2[j] + 2*t2)*delta2[j]
 
         if sdiff > -rootmstall / (maxstall + iters):
             # full permute

@@ -19,3 +19,6 @@ setup(
   cmdclass = {'build_ext': build_ext},
   ext_modules = ext_modules
 )
+
+print
+print "Done!"
