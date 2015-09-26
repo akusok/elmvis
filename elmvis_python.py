@@ -73,7 +73,6 @@ def opt(Y, A, maxiter=100000, maxstall=10000, report=1000):
             print bests, maxstall**0.5 / (maxstall + iters)
             t = time()
 
-
     return Y, bests
 
 
