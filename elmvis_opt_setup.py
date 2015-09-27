@@ -11,7 +11,9 @@ from Cython.Distutils import build_ext
 import numpy
 
 ext_modules = [Extension("elmvisopt",
-                         ["elmvis_opt.pyx"],
+                         ["elmvis_opt.pyx", "getdiff.c"],
+                         extra_compile_args=['-fopenmp'],
+                         extra_link_args=['-fopenmp'],
                          include_dirs=[numpy.get_include()])]
 
 setup(
