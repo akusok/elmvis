@@ -10,15 +10,16 @@ import hpelm
 import cPickle
 import sys
 from time import time
-from elmvisopt import op2 as c_opt, bench as c_bench
-from elmvis_python import opt as p_opt, bench as p_bench
+from elmvis_cython import elmvis_cython
+from elmvis_python import elmvis
+from elmvis_gpu import elmvis_gpu
 
 #from elmvis_ga import GA
 
 
 maxiter = 1000000
 stall = 1000000
-report = 100
+report = 1000
 
 if True:
     X = cPickle.load(open("artiface_orig.pkl", "rb"))
@@ -31,6 +32,9 @@ else:
 
 #d = 3
 #X = X[:, :d]
+
+#X = np.random.rand(5000, 4000)
+
 N, d = X.shape
 V = np.random.rand(N, 2)*2 - 1
 V = (V - V.mean(0)) / V.std(0)
@@ -48,9 +52,8 @@ H = elm.project(V)
 A = H.dot(np.linalg.pinv(np.dot(H.T, H))).dot(H.T)
 
 t = time()
-X, cost, ipm = p_opt(X, A, 1E+6, maxiter, stall, report=report)
+X, cost, ipm = elmvis(X, A, 1E+9, maxiter, stall, report=report)
 t = time()-t
-print ipm
 
 elm.train(V, X)
 MSE0 = elm.error(elm.predict(V), X)

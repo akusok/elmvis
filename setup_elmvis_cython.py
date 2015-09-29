@@ -10,14 +10,12 @@ from distutils.extension import Extension
 from Cython.Distutils import build_ext
 import numpy
 
-ext_modules = [Extension("elmvisopt",
-                         ["elmvis_opt.pyx", "getdiff.c"],
-                         extra_compile_args=['-fopenmp'],
-                         extra_link_args=['-fopenmp'],
+ext_modules = [Extension("elmvis_cython",
+                         ["elmvis_cython.pyx"],
                          include_dirs=[numpy.get_include()])]
 
 setup(
-  name = 'ELMVIS+ app',
+  name = 'ELMVIS+ cython app',
   cmdclass = {'build_ext': build_ext},
   ext_modules = ext_modules
 )
