@@ -8,22 +8,17 @@ Created on Wed Aug 19 13:52:14 2015
 import numpy as np
 import hpelm
 import cPickle
-import sys, os
-from elmvisopt import opt
-from multiprocessing import Process, Queue
+import sys
+from time import time
+from elmvisopt import op2 as c_opt, bench as c_bench
+from elmvis_python import opt as p_opt, bench as p_bench
+
 #from elmvis_ga import GA
-#from elmvis_python import opt
 
 
-# run as:
-# OMP_NUM_THREADS=1 python elmvisplus.py 4
-
-
-
-
-maxiter = 10000000
-stall = 1000
-report = 1000
+maxiter = 1000000
+stall = 1000000
+report = 100
 
 if True:
     X = cPickle.load(open("artiface_orig.pkl", "rb"))
@@ -34,24 +29,29 @@ else:
     X = np.genfromtxt("DATA.txt", delimiter=',')
     X = (X - X.mean(0)) / np.linalg.norm(X, axis=0)
 
+#d = 3
+#X = X[:, :d]
 N, d = X.shape
 V = np.random.rand(N, 2)*2 - 1
 V = (V - V.mean(0)) / V.std(0)
 
 # build initial ELM
-L = 950
+L = int(d**0.5)+1
 elm = hpelm.ELM(2, d)
 elm.add_neurons(2, 'lin')
 elm.add_neurons(L, 'sigm')
-elm.train(V, X)
-print "L=%d:  %.5f" % (L, elm.error(elm.predict(V), X))
+#elm.train(V, X)
+#print "L=%d:  %.5f" % (L, elm.error(elm.predict(V), X))
 
 # compute initial A
 H = elm.project(V)
 A = H.dot(np.linalg.pinv(np.dot(H.T, H))).dot(H.T)
 
-# iteratively tune X
-X, cost = opt(X, A, 1E-9, maxiter, stall, report, nthreads=int(sys.argv[1]))
+t = time()
+X, cost, ipm = p_opt(X, A, 1E+6, maxiter, stall, report=report)
+t = time()-t
+print ipm
+
 elm.train(V, X)
 MSE0 = elm.error(elm.predict(V), X)
 

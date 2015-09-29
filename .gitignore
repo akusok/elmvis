@@ -3,6 +3,7 @@
 *.c
 *.pyd
 *~
+*.lprof
 
 # Setuptools distribution folder
 /dist/
