@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Created on Wed Aug 19 13:52:14 2015
+Created on Tue Sep 29 10:18:24 2015
 
 @author: akusok
 """
@@ -12,6 +12,10 @@ from multiprocessing import Queue
 from cython.parallel import prange
 from time import time
 import os
+
+from pycuda import autoinit, gpuarray
+from skcuda import linalg
+from pycuda.compiler import SourceModule
 
 # this was for parallel, but now GPU handles parallel
 #cdef extern from "getdiff.h":
@@ -32,7 +36,7 @@ cdef double getdiff(double *A, double *Y, double *AY, int d, int N, int i1, int 
 
 
 @cython.boundscheck(False)
-def elmvis_cython(np.ndarray[np.float64_t, ndim=2] Yin,
+def elmvis_hybrid(np.ndarray[np.float64_t, ndim=2] Yin,
                   np.ndarray[np.float64_t, ndim=2] A,
                   double tol = 1E-9,
                   int maxiter = 100000,
@@ -53,6 +57,17 @@ def elmvis_cython(np.ndarray[np.float64_t, ndim=2] Yin,
     err = np.diag(Y.T.dot(A).dot(Y)).sum() / d
     print "original error:", err
     tol *= err
+
+    # init GPU
+    try:
+        linalg.init()
+    except ImportError as e:
+        print e
+    devA = gpuarray.to_gpu(A)
+    devY = gpuarray.to_gpu(Y)
+    devAY = linalg.dot(devA, devY)
+    devAi = gpuarray.empty((N, 2), dtype=np.float64)
+    devDelta = gpuarray.empty((2, d), dtype=np.float64)
     
     t = time()
     while (iters < maxiter) and (stall < maxstall):
@@ -65,16 +80,20 @@ def elmvis_cython(np.ndarray[np.float64_t, ndim=2] Yin,
 
         if getdiff(&A[0,0], &Y[0,0], &AY[0,0], d, N, i1, i2) > -(tol * maxstall) / (iters + maxstall) :
             stall = 0
+
+            devAi[:, 0] = devA[:, i1]
+            devAi[:, 1] = devA[:, i2]
+            devDelta[0, :] = devY[i1, :] - devY[i2, :]
+            devDelta[1, :] = devY[i2, :] - devY[i1, :]
+            linalg.add_dot(devAi, devDelta, devAY, alpha=-1)
+            devAY.get(ary=AY)
+
             y1 = Y[i1].copy()
             y2 = Y[i2].copy()
             Y[i1] = y2
             Y[i2] = y1
-    
-            delta1 = y2 - y1
-            delta2 = y1 - y2          
-            Ai = A.take((i1, i2), axis=1)
-            Yi = np.vstack((delta2, delta1))
-            AY -= np.dot(Ai, Yi)
+            devY[i1] = y2
+            devY[i2] = y1
  
         if iters % report == 0:
             ips = report*1.0/(time()-t)

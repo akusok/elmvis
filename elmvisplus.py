@@ -8,24 +8,25 @@ Created on Wed Aug 19 13:52:14 2015
 import numpy as np
 import hpelm
 import cPickle
-import sys
 from time import time
 from elmvis_cython import elmvis_cython
 from elmvis_python import elmvis
 from elmvis_gpu import elmvis_gpu
+from elmvis_hybrid import elmvis_hybrid
 
 #from elmvis_ga import GA
 
 
-maxiter = 1000000
+maxiter = 2001
 stall = 1000000
-report = 1000
+report = 500
 
 if True:
     X = cPickle.load(open("artiface_orig.pkl", "rb"))
     np.random.shuffle(X)
     X = X[:, X.std(0) > 1E-6]
     X = (X - X.mean(0)) / X.std(0)
+    X = np.ascontiguousarray(X)
 else:
     X = np.genfromtxt("DATA.txt", delimiter=',')
     X = (X - X.mean(0)) / np.linalg.norm(X, axis=0)
@@ -51,8 +52,12 @@ elm.add_neurons(L, 'sigm')
 H = elm.project(V)
 A = H.dot(np.linalg.pinv(np.dot(H.T, H))).dot(H.T)
 
+tol = 1E-6
 t = time()
-X, cost, ipm = elmvis(X, A, 1E+9, maxiter, stall, report=report)
+X2, cost, ipm =        elmvis(X.copy(), A.copy(), tol, maxiter, stall, report=report)
+X2, cost, ipm = elmvis_cython(X.copy(), A.copy(), tol, maxiter, stall, report=report)
+X2, cost, ipm =    elmvis_gpu(X.copy(), A.copy(), tol, maxiter, stall, report=report)
+X2, cost, ipm = elmvis_hybrid(X.copy(), A.copy(), tol, maxiter, stall, report=report)
 t = time()-t
 
 elm.train(V, X)

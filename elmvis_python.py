@@ -11,12 +11,15 @@ from time import time
 
 def elmvis(Y, A, tol=1E-9, maxiter=100000, maxstall=10000, report=1000):
     N, d = Y.shape
-    print "original error:", np.diag(Y.T.dot(A).dot(Y)).sum() / d
+    err = np.diag(Y.T.dot(A).dot(Y)).sum() / d
+    print "original error:", err
+    tol *= err
 
     AY = np.dot(A, Y)
 
     stall = 0
     iters = 0
+    ips = 0
     t = time()
     while (stall < maxstall) and (iters < maxiter):
         iters += 1
@@ -44,11 +47,24 @@ def elmvis(Y, A, tol=1E-9, maxiter=100000, maxstall=10000, report=1000):
             AY -= np.dot(Ai, Deltas)
 
         if iters % report == 0:
+            ips = report*1.0/(time()-t)
             print "%d | %d | %.0f iters/min" % (iters, stall, report*60.0/(time()-t))
             t = time()
 
     bests = np.diag(Y.T.dot(A).dot(Y)).sum() / d
-    return Y, bests
+    return Y, bests, ips
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

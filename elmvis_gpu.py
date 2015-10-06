@@ -17,10 +17,15 @@ from pycuda.compiler import SourceModule
 
 def elmvis_gpu(Y, A, tol=1E-9, maxiter=100000, maxstall=10000, report=1000, dt=np.float64):
     N, d = Y.shape
-    print "original error:", np.diag(Y.T.dot(A).dot(Y)).sum() / d
+    err = np.diag(Y.T.dot(A).dot(Y)).sum() / d
+    print "original error:", err
+    tol *= err
 
     # init GPU
-    linalg.init()
+    try:
+        linalg.init()
+    except ImportError as e:
+        print e
     devA = gpuarray.to_gpu(A.astype(dt))
     devY = gpuarray.to_gpu(Y.astype(dt))
     devYi1 = gpuarray.empty((d,), dtype=dt)
@@ -51,6 +56,7 @@ def elmvis_gpu(Y, A, tol=1E-9, maxiter=100000, maxstall=10000, report=1000, dt=n
 
     stall = 0
     iters = 0
+    ips = 0
     t = time()
     while (stall < maxstall) and (iters < maxiter):
         iters += 1
@@ -76,12 +82,13 @@ def elmvis_gpu(Y, A, tol=1E-9, maxiter=100000, maxstall=10000, report=1000, dt=n
             devY[i2] = devYi1
 
         if iters % report == 0:
+            ips = report*1.0/(time()-t)
             print "%d | %d | %.0f iters/min" % (iters, stall, report*60.0/(time()-t))
             t = time()
 
     Y = devY.get()
     bests = np.diag(Y.T.dot(A).dot(Y)).sum() / d
-    return Y, bests
+    return Y, bests, ips
 
 
 

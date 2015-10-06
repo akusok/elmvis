@@ -4,6 +4,8 @@
 *.pyd
 *~
 *.lprof
+*.so
+
 
 # Setuptools distribution folder
 /dist/

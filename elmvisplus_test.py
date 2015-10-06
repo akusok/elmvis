@@ -10,68 +10,69 @@ import hpelm
 import cPickle
 import sys
 from time import time
-from multiprocessing import cpu_count
-from elmvisopt import opt as c_opt, bench as c_bench
-from elmvis_python import opt as p_opt, bench as p_bench
+from elmvis_cython import elmvis_cython
+from elmvis_python import elmvis
+from elmvis_gpu import elmvis_gpu
+from elmvis_hybrid import elmvis_hybrid
 #from elmvis_ga import GA
 
 
-maxiter = 10000000
-stall = 10000
-report = 10000
-
-
-data = np.empty((0,5))
-
-for d in range(2, 1000):
-    print 'processing d=%d' % d
-    X = np.random.rand(1000, d)
+def run():
+    data = np.empty((0, 9))
+    d = int(sys.argv[2])
+    k2 = 1000
     
-    N, d = X.shape
-    V = np.random.rand(N, 2)*2 - 1
-    V = (V - V.mean(0)) / V.std(0)
+    for N in range(20, 10000+1, 20):
+        print 'processing N=%d (k=%d)' % (N, k2),
+        X = np.random.rand(N, d)
+        
+        V = np.random.rand(N, 2)*2 - 1
+        V = (V - V.mean(0)) / V.std(0)
+        
+        # build initial ELM
+        L = int(d**0.5)+1
+        elm = hpelm.ELM(2, d)
+        elm.add_neurons(2, 'lin')
+        elm.add_neurons(L, 'sigm')
+        #elm.train(V, X)
+        #print "L=%d:  %.5f" % (L, elm.error(elm.predict(V), X))
+        
+        # compute initial A
+        H = elm.project(V)
+        A = H.dot(np.linalg.pinv(np.dot(H.T, H))).dot(H.T)
+        
+        # find reasonable problem size
+#        k = 2
+#        while True:
+#            k *= 2
+#            t = time()
+#            elmvis_gpu(X, A, tol=1E+9, maxiter=k, maxstall=k, report=k)            
+#            elmvis(X, A, tol=1E+9, maxiter=k, maxstall=k, report=k)  # always check
+#            t = time()-t
+#            if t > 1:
+#                break
+        
+#        print "time python: %f, report every %d" % (t, k)
+        k10 = k2*10
+        
+        # test all methods
+        _,_,p1 = elmvis(X, A, tol=1E+9, maxiter=k2, maxstall=k2, report=k2/2)
+        _,_,p2 = elmvis(X, A, tol=-1E+9, maxiter=k10, maxstall=k10, report=k10/2)
     
-    # build initial ELM
-    L = int(d**0.5)+1
-    elm = hpelm.ELM(2, d)
-    elm.add_neurons(2, 'lin')
-    elm.add_neurons(L, 'sigm')
-    #elm.train(V, X)
-    #print "L=%d:  %.5f" % (L, elm.error(elm.predict(V), X))
+        _,_,c1 = elmvis_cython(X, A, tol=1E+9, maxiter=k2, maxstall=k2, report=k2/2)
+        _,_,c2 = elmvis_cython(X, A, tol=-1E+9, maxiter=k10, maxstall=k10, report=k10/2)
     
-    # compute initial A
-    H = elm.project(V)
-    A = H.dot(np.linalg.pinv(np.dot(H.T, H))).dot(H.T)
+        _,_,g1 = elmvis_gpu(X, A, tol=1E+9, maxiter=k2, maxstall=k2, report=k2/2)
+        _,_,g2 = elmvis_gpu(X, A, tol=-1E+9, maxiter=k10, maxstall=k10, report=k10/2)
     
-    # find best method
-    #ncores = cpu_count()
-    k = 2
-    while True:
-        k *= 2
-        tc,_ = c_bench(X, A, maxiter=k, nthreads=1)
-        tp,_ = p_bench(X, A, maxiter=k)
-        if max((tc, tp)) > 1:
-            break
+        _,_,h1 = elmvis_hybrid(X, A, tol=1E+9, maxiter=k2, maxstall=k2, report=k2/2)
+        _,_,h2 = elmvis_hybrid(X, A, tol=-1E+9, maxiter=k10, maxstall=k10, report=k10/2)
     
-    opt = c_opt if tc < tp else p_opt
-    report = int(k*1.0/min((tc, tp)))
-    report = k
-    print "time C: %f, time python: %f, report every %d" % (tc, tp, report)
+        data = np.vstack((data, np.array([N, p1, p2, c1, c2, g1, g2, h1, h2])))
+        np.savetxt(sys.argv[1], data, fmt="%.3f")
+        k2 = int(min([p1, p2, c1, c2, g1, g2, h1, h2]))
     
-    # iteratively tune X
-    maxiter = report*3
-    stall = report*100
-
-    _,_,c1 = c_opt(X, A, -1E+9, maxiter, stall, report=report, nthreads=1)
-
-    _,_,c2 = c_opt(X, A, -1E+9, maxiter, stall, report=report, nthreads=2)
-
-    _,_,c4 = c_opt(X, A, -1E+9, maxiter, stall, report=report, nthreads=4)
-
-    _,_,p4 = p_opt(X, A, -1E+9, maxiter, stall, report=report)
-
-    data = np.vstack((data, np.array([d, c1, c2, c4, p4])))
-    np.savetxt(sys.argv[1], data, fmt="%.3f")
+run()
 
 
 
