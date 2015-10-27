@@ -1,8 +1,8 @@
 # elmvis
 
-These are 4 versions of ELMVIS+ code in Python, all impementing the same "elmvis" function. For details, check my paper "ELMVIS+: Improved Nonlinear Visualization Technique using Cosine Distance and Extreme Learning Machines"
+These are 4 versions of ELMVIS+ code in Python, all impementing the same `elmvis` function. For details, check my paper "ELMVIS+: Improved Nonlinear Visualization Technique using Cosine Distance and Extreme Learning Machines"
 
-Parameters:
+`elmvis(X, A, tol, cossim, maxiter, maxstall, maxupdate, maxtime, report, silent)`
 * X: original data (like MNIST digits), (N*d) matrix where 'N' is number of data samples and 'd' is data dimensionality
 * A: parameter matrix from ELM model (check paper), is (N*N) matrix
 * tol: tolerance of optimization method (like simulated annealing), use a small number or zero
