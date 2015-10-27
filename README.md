@@ -3,8 +3,8 @@
 These are 4 versions of ELMVIS+ code in Python, all impementing the same `elmvis` function. For details, check my paper "ELMVIS+: Improved Nonlinear Visualization Technique using Cosine Distance and Extreme Learning Machines"
 
 `Xnew, cossimnew, iters, updates = elmvis(X, A, tol, cossim, maxiter, maxstall, maxupdate, maxtime, report, silent)`
-Inputs:
 
+Inputs:
 * X: original data (like MNIST digits), (N*d) matrix where 'N' is number of data samples and 'd' is data dimensionality
 * A: parameter matrix from ELM model (check paper), is (N*N) matrix
 * tol: tolerance of optimization method (like simulated annealing), use a small number or zero
@@ -17,7 +17,6 @@ Inputs:
 * silent: suppress output
 
 Returns:
-
 * Xnew: data matrix with re-arranged rows, better suited for the visualization used
 * cossimnew: new value of cosine similarity
 * iters: how many iterations the method run
