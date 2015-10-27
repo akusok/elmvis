@@ -9,17 +9,17 @@ import numpy as np
 import hpelm
 import cPickle
 from time import time
-from elmvis_cython import elmvis_cython
-from elmvis_python import elmvis
-from elmvis_gpu import elmvis_gpu
-from elmvis_hybrid import elmvis_hybrid
+#from elmvis_cython import elmvis
+#from elmvis_python import elmvis
+#from elmvis_gpu import elmvis as elmvis_gpu
+from elmvis_hybrid import elmvis32 as elmvis
 
 #from elmvis_ga import GA
 
 
 maxiter = 2001
 stall = 1000000
-report = 500
+report = 1000
 
 if True:
     X = cPickle.load(open("artiface_orig.pkl", "rb"))
@@ -54,11 +54,15 @@ A = H.dot(np.linalg.pinv(np.dot(H.T, H))).dot(H.T)
 
 tol = 1E-6
 t = time()
-X2, cost, ipm =        elmvis(X.copy(), A.copy(), tol, maxiter, stall, report=report)
-X2, cost, ipm = elmvis_cython(X.copy(), A.copy(), tol, maxiter, stall, report=report)
-X2, cost, ipm =    elmvis_gpu(X.copy(), A.copy(), tol, maxiter, stall, report=report)
-X2, cost, ipm = elmvis_hybrid(X.copy(), A.copy(), tol, maxiter, stall, report=report)
+X2, cost, iters, updates = elmvis(X.astype(np.float32),
+                                  A.astype(np.float32),
+                                  tol=tol,
+                                  maxiter=maxiter,
+                                  maxstall=stall,
+                                  maxupdate=10000,
+                                  report=report)
 t = time()-t
+print iters, updates
 
 elm.train(V, X)
 MSE0 = elm.error(elm.predict(V), X)

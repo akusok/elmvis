@@ -8,101 +8,225 @@ Created on Tue Sep 29 10:18:24 2015
 import numpy as np
 cimport numpy as np
 cimport cython
-from multiprocessing import Queue
-from cython.parallel import prange
 from time import time
-import os
 
 from pycuda import autoinit, gpuarray
 from skcuda import linalg
 from pycuda.compiler import SourceModule
 
-# this was for parallel, but now GPU handles parallel
-#cdef extern from "getdiff.h":
-#    cdef double getdiff(double *A, double *Y, int d, int N, int i1, int i2, int nthr)
 
-
-cdef double getdiff(double *A, double *Y, double *AY, int d, int N, int i1, int i2):
+cdef double getdiff(double *A, double *X, double *AX, long d, long N, long i1, long i2):
     """Does the same as the C function on top, but without parallelism.
     """
-    cdef int j, k
-    cdef double yi1, yi2, result=0
+    cdef long j, k
+    cdef double xi1, xi2, result=0
     for j in range(d):
-        yi1 = Y[i1*d + j]
-        yi2 = Y[i2*d + j]
-        result += (A[i1*N + i1] * (yi2 - yi1) + 2*AY[i1*d + j]) * (yi2 - yi1)
-        result += (A[i2*N + i2] * (yi1 - yi2) + 2*(AY[i2*d + j] + A[i2*N + i1]*(yi2 - yi1))) * (yi1 - yi2)
+        xi1 = X[i1*d + j]
+        xi2 = X[i2*d + j]
+        result += (A[i1*N + i1] * (xi2 - xi1) + 2*AX[i1*d + j]) * (xi2 - xi1)
+        result += (A[i2*N + i2] * (xi1 - xi2) + 2*(AX[i2*d + j] + A[i2*N + i1]*(xi2 - xi1))) * (xi1 - xi2)
     return result
 
 
 @cython.boundscheck(False)
-def elmvis_hybrid(np.ndarray[np.float64_t, ndim=2] Yin,
-                  np.ndarray[np.float64_t, ndim=2] A,
-                  double tol = 1E-9,
-                  int maxiter = 100000,
-                  int maxstall = 10000,
-                  int report = 1000):
-    
-    cdef int N = Yin.shape[0], d = Yin.shape[1]
-    cdef np.ndarray[np.float64_t, ndim=2] Y = Yin.copy()
-    cdef np.ndarray[np.float64_t, ndim=2] AY = np.dot(A, Yin)
+def elmvis(np.ndarray[np.float64_t, ndim=2] X,
+           np.ndarray[np.float64_t, ndim=2] A,
+           double tol=1E-9,
+           double cossim=0,
+           long maxiter=1000000,
+           long maxstall=1000,
+           long maxupdate=1000000,
+           long maxtime=24*60*60,
+           long report=1000,
+           int silent=0):
+    """ELMVIS+ function in Cython with GPU update step, double precision.
+    """
+
+    cdef long N = X.shape[0], d = X.shape[1]
+    cdef np.ndarray[np.float64_t, ndim=2] AX = np.dot(A, X)
     cdef np.ndarray[np.float64_t, ndim=2] Ai = np.empty((N, 2), dtype=np.float64)
-    cdef np.ndarray[np.float64_t, ndim=2] Yi = np.empty((2, d), dtype=np.float64)
-    cdef np.ndarray[np.float64_t, ndim=1] y1 = np.empty(d, dtype=np.float64)
-    cdef np.ndarray[np.float64_t, ndim=1] y2 = np.empty(d, dtype=np.float64)
+    cdef np.ndarray[np.float64_t, ndim=2] Xi = np.empty((2, d), dtype=np.float64)
+    cdef np.ndarray[np.float64_t, ndim=1] x1 = np.empty(d, dtype=np.float64)
+    cdef np.ndarray[np.float64_t, ndim=1] x2 = np.empty(d, dtype=np.float64)
     cdef np.ndarray[np.float64_t, ndim=1] delta1 = np.empty(d, dtype=np.float64)
     cdef np.ndarray[np.float64_t, ndim=1] delta2 = np.empty(d, dtype=np.float64)
-    cdef int stall = 0, iters = 0, i1, i2
-    cdef double ips = 0, err
-    err = np.diag(Y.T.dot(A).dot(Y)).sum() / d
-    print "original error:", err
-    tol *= err
+    cdef long stall=0, iters=0, updates=0, nstalls=100, istall=0, i1, i2
+    cdef double diff, t, t0, tlast
+    cdef np.ndarray[np.float64_t, ndim=1] stalls = np.ones((nstalls,), dtype=np.float64)
+
+    if cossim == 0:
+        cossim = np.trace(X.T.dot(A).dot(X)) / d
+    if not silent: print "original similarity: ", cossim
+    tol = tol*cossim
 
     # init GPU
+    dt = np.float64
     try:
         linalg.init()
     except ImportError as e:
         print e
-    devA = gpuarray.to_gpu(A)
-    devY = gpuarray.to_gpu(Y)
-    devAY = linalg.dot(devA, devY)
-    devAi = gpuarray.empty((N, 2), dtype=np.float64)
-    devDelta = gpuarray.empty((2, d), dtype=np.float64)
+    devA = gpuarray.to_gpu(A.astype(dt))
+    devX = gpuarray.to_gpu(X.astype(dt))
+    devAX = linalg.dot(devA, devX)
+    devAi = gpuarray.empty((N, 2), dtype=dt)
+    devDelta = gpuarray.empty((2, d), dtype=dt)
     
-    t = time()
-    while (iters < maxiter) and (stall < maxstall):
+    t0 = tlast = time()        
+    while (iters < maxiter) and (stall < maxstall*10):
         iters = iters + 1
         stall = stall + 1
 
+        # get two different random numbers
         i1, i2 = np.random.randint(0, N, size=2)
         while i1 == i2:
             i1, i2 = np.random.randint(0, N, size=2)
 
-        if getdiff(&A[0,0], &Y[0,0], &AY[0,0], d, N, i1, i2) > -(tol * maxstall) / (iters + maxstall) :
-            stall = 0
-
+        diff = getdiff(&A[0,0], &X[0,0], &AX[0,0], d, N, i1, i2)
+        if diff > -tol * (maxstall * 1.0 / (iters + maxstall)):
             devAi[:, 0] = devA[:, i1]
             devAi[:, 1] = devA[:, i2]
-            devDelta[0, :] = devY[i1, :] - devY[i2, :]
-            devDelta[1, :] = devY[i2, :] - devY[i1, :]
-            linalg.add_dot(devAi, devDelta, devAY, alpha=-1)
-            devAY.get(ary=AY)
+            devDelta[0, :] = devX[i1, :] - devX[i2, :]
+            devDelta[1, :] = devX[i2, :] - devX[i1, :]
+            linalg.add_dot(devAi, devDelta, devAX, alpha=-1)
+            devAX.get(ary=AX)
 
-            y1 = Y[i1].copy()
-            y2 = Y[i2].copy()
-            Y[i1] = y2
-            Y[i2] = y1
-            devY[i1] = y2
-            devY[i2] = y1
+            x1 = X[i1].copy()
+            x2 = X[i2].copy()
+            X[i1] = x2
+            X[i2] = x1
+            devX[i1] = x2
+            devX[i2] = x1
  
-        if iters % report == 0:
-            ips = report*1.0/(time()-t)
-            print "%d | %d | %.0f iters/min" % (iters, stall, report*60.0/(time()-t))
-            t = time()
+            cossim += diff / d
+            updates += 1
+            if updates > maxupdate:
+                break
 
-    bests = np.diag(Y.T.dot(A).dot(Y)).sum() / d
-    print "final error:", bests
-    return Y, bests, ips
+            stalls[istall] = stall
+            stall = 0
+            istall = (istall+1) % nstalls
+            if stalls[:updates].mean() > maxstall:
+                break 
+ 
+        # only report takes current time
+        if iters % report == 0:
+            t = time()
+            if not silent: print "%d | %d | %.0f iters/min" % (iters, stalls[:updates].mean(), report*60.0/(t-tlast))
+            tlast = t
+            if t - t0 > maxtime:
+                break
+
+    if not silent: print "final similarity: ", cossim
+    return X, cossim, iters, updates
+
+
+###############################################################################
+### same but 32-bit ###
+
+cdef double getdiff32(float *A, float *X, float *AX, long d, long N, long i1, long i2):
+    """Does the same as the C function on top, but without parallelism.
+    """
+    cdef long j, k
+    cdef float xi1, xi2
+    cdef double result=0
+    for j in range(d):
+        xi1 = X[i1*d + j]
+        xi2 = X[i2*d + j]
+        result += (A[i1*N + i1] * (xi2 - xi1) + 2*AX[i1*d + j]) * (xi2 - xi1)
+        result += (A[i2*N + i2] * (xi1 - xi2) + 2*(AX[i2*d + j] + A[i2*N + i1]*(xi2 - xi1))) * (xi1 - xi2)
+    return result
+
+
+@cython.boundscheck(False)
+def elmvis32(np.ndarray[np.float32_t, ndim=2] X,
+             np.ndarray[np.float32_t, ndim=2] A,
+             double tol=1E-9,
+             double cossim=0,
+             long maxiter=1000000,
+             long maxstall=1000,
+             long maxupdate=1000000,
+             long maxtime=24*60*60,
+             long report=1000,
+             int silent=0):
+    """ELMVIS+ function in Cython with GPU update step, double precision.
+    """
+
+    cdef long N = X.shape[0], d = X.shape[1]
+    cdef np.ndarray[np.float32_t, ndim=2] AX = np.dot(A, X)
+    cdef np.ndarray[np.float32_t, ndim=2] Ai = np.empty((N, 2), dtype=np.float32)
+    cdef np.ndarray[np.float32_t, ndim=2] Xi = np.empty((2, d), dtype=np.float32)
+    cdef np.ndarray[np.float32_t, ndim=1] x1 = np.empty(d, dtype=np.float32)
+    cdef np.ndarray[np.float32_t, ndim=1] x2 = np.empty(d, dtype=np.float32)
+    cdef np.ndarray[np.float32_t, ndim=1] delta1 = np.empty(d, dtype=np.float32)
+    cdef np.ndarray[np.float32_t, ndim=1] delta2 = np.empty(d, dtype=np.float32)
+    cdef long stall=0, iters=0, updates=0, nstalls=100, istall=0, i1, i2
+    cdef double diff, t, t0, tlast
+    cdef np.ndarray[np.float32_t, ndim=1] stalls = np.ones((nstalls,), dtype=np.float32)
+
+    if cossim == 0:
+        cossim = np.trace(X.T.dot(A).dot(X)) / d
+    if not silent: print "original similarity: ", cossim
+    tol = tol*cossim
+
+    # init GPU
+    dt = np.float32
+    try:
+        linalg.init()
+    except ImportError as e:
+        print e
+    devA = gpuarray.to_gpu(A.astype(dt))
+    devX = gpuarray.to_gpu(X.astype(dt))
+    devAX = linalg.dot(devA, devX)
+    devAi = gpuarray.empty((N, 2), dtype=dt)
+    devDelta = gpuarray.empty((2, d), dtype=dt)
+    
+    t0 = tlast = time()        
+    while (iters < maxiter) and (stall < maxstall*10):
+        iters = iters + 1
+        stall = stall + 1
+
+        # get two different random numbers
+        i1, i2 = np.random.randint(0, N, size=2)
+        while i1 == i2:
+            i1, i2 = np.random.randint(0, N, size=2)
+
+        diff = getdiff32(&A[0,0], &X[0,0], &AX[0,0], d, N, i1, i2)
+        if diff > -tol * (maxstall * 1.0 / (iters + maxstall)):
+            devAi[:, 0] = devA[:, i1]
+            devAi[:, 1] = devA[:, i2]
+            devDelta[0, :] = devX[i1, :] - devX[i2, :]
+            devDelta[1, :] = devX[i2, :] - devX[i1, :]
+            linalg.add_dot(devAi, devDelta, devAX, alpha=-1)
+            devAX.get(ary=AX)
+
+            x1 = X[i1].copy()
+            x2 = X[i2].copy()
+            X[i1] = x2
+            X[i2] = x1
+            devX[i1] = x2
+            devX[i2] = x1
+ 
+            cossim += diff / d
+            updates += 1
+            if updates > maxupdate:
+                break
+
+            stalls[istall] = stall
+            stall = 0
+            istall = (istall+1) % nstalls
+            if stalls[:updates].mean() > maxstall:
+                break 
+ 
+        # only report takes current time
+        if iters % report == 0:
+            t = time()
+            if not silent: print "%d | %d | %.0f iters/min" % (iters, stalls[:updates].mean(), report*60.0/(t-tlast))
+            tlast = t
+            if t - t0 > maxtime:
+                break
+
+    if not silent: print "final similarity: ", cossim
+    return X, cossim, iters, updates
 
 
 
