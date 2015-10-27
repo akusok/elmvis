@@ -9,50 +9,78 @@ import numpy as np
 from time import time
 
 
-def elmvis(Y, A, tol=1E-9, maxiter=100000, maxstall=10000, report=1000):
-    N, d = Y.shape
-    err = np.diag(Y.T.dot(A).dot(Y)).sum() / d
-    print "original error:", err
-    tol *= err
+def elmvis(X, A, tol=1E-9, cossim=None,
+           maxiter=1000000,
+           maxstall=1000,
+           maxupdate=1000000,
+           maxtime=24*60*60,
+           report=1000,
+           silent=False):
+    """ELMVIS+ function.
+    """
 
-    AY = np.dot(A, Y)
+    N, d = X.shape
+    if cossim is None:
+        cossim = np.trace(X.T.dot(A).dot(X)) / d
+    if not silent: print "original similarity: ", cossim
+    tol = tol*cossim
+
+    AX = np.dot(A, X)
 
     stall = 0
     iters = 0
-    ips = 0
-    t = time()
-    while (stall < maxstall) and (iters < maxiter):
+    updates = 0
+    t0 = tlast = time()
+
+    # track a list of last "nstalls" updates, get their mean
+    nstalls = 100
+    stalls = np.ones((nstalls,))
+    istall = 0
+
+    while (iters < maxiter) and (stall < maxstall*10):
         iters += 1
         stall += 1
 
+        # get two different random numbers
         i1, i2 = np.random.randint(0, N, size=2)
         while i1 == i2:
             i1, i2 = np.random.randint(0, N, size=2)
 
-        y1 = Y[i1, :].copy()
-        y2 = Y[i2, :].copy()
-        delta1 = y2 - y1
-        delta2 = y1 - y2
-        diff = A[i1,i1]*np.sum(delta1**2) + 2*np.sum(AY[i1]*delta1) +\
-               A[i2,i2]*np.sum(delta2**2) + 2*np.sum(AY[i2]*delta2) + 2*A[i2,i1]*np.sum(delta1*delta2)
+        x1 = X[i1, :].copy()
+        x2 = X[i2, :].copy()
+        delta1 = x2 - x1
+        delta2 = x1 - x2
+        diff = A[i1,i1]*np.sum(delta1**2) + 2*np.sum(AX[i1]*delta1) +\
+               A[i2,i2]*np.sum(delta2**2) + 2*np.sum(AX[i2]*delta2) + 2*A[i2,i1]*np.sum(delta1*delta2)
 
-        if diff > -(tol * maxstall) / (iters + maxstall):
-            stall = 0
-
-            Y[i1] = y2
-            Y[i2] = y1
-
+        if diff > -tol * (maxstall * 1.0 / (iters + maxstall)):
+            X[i1] = x2
+            X[i2] = x1
             Ai = A[:, (i1, i2)]
             Deltas = np.vstack((delta2, delta1))
-            AY -= np.dot(Ai, Deltas)
+            AX -= np.dot(Ai, Deltas)
 
+            cossim += diff / d
+            updates += 1
+            if updates > maxupdate:
+                break
+
+            stalls[istall] = stall
+            stall = 0
+            istall = (istall+1) % nstalls
+            if stalls[:updates].mean() > maxstall:
+                break
+
+        # only report takes current time
         if iters % report == 0:
-            ips = report*1.0/(time()-t)
-            print "%d | %d | %.0f iters/min" % (iters, stall, report*60.0/(time()-t))
             t = time()
+            if not silent: print "%d | %d | %.0f iters/min" % (iters, stalls[:updates].mean(), report*60.0/(t-tlast))
+            tlast = t
+            if t - t0 > maxtime:
+                break
 
-    bests = np.diag(Y.T.dot(A).dot(Y)).sum() / d
-    return Y, bests, ips
+    if not silent: print "final similarity: ", cossim
+    return X, cossim, iters, updates
 
 
 
