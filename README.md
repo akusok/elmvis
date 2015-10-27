@@ -2,7 +2,9 @@
 
 These are 4 versions of ELMVIS+ code in Python, all impementing the same `elmvis` function. For details, check my paper "ELMVIS+: Improved Nonlinear Visualization Technique using Cosine Distance and Extreme Learning Machines"
 
-`elmvis(X, A, tol, cossim, maxiter, maxstall, maxupdate, maxtime, report, silent)`
+`Xnew, cossimnew, iters, updates = elmvis(X, A, tol, cossim, maxiter, maxstall, maxupdate, maxtime, report, silent)`
+Inputs:
+
 * X: original data (like MNIST digits), (N*d) matrix where 'N' is number of data samples and 'd' is data dimensionality
 * A: parameter matrix from ELM model (check paper), is (N*N) matrix
 * tol: tolerance of optimization method (like simulated annealing), use a small number or zero
@@ -13,6 +15,13 @@ These are 4 versions of ELMVIS+ code in Python, all impementing the same `elmvis
 * maxtime: maximum runtime; runtime is checked only on updates
 * report: report current progress every "report" number of swaps
 * silent: suppress output
+
+Returns:
+
+* Xnew: data matrix with re-arranged rows, better suited for the visualization used
+* cossimnew: new value of cosine similarity
+* iters: how many iterations the method run
+* updates: how many updates were performed
 
 Hybrid and Cython implementations need to be compiled with Cython: use `python setup_elmvis_<hybrid or cython>.py build_ext --inplace`.
 GPU code requires Pycuda and Skcuda, supports NVidia cards (tested on GTX Titan Black, speedup up to 30x with high-dimensional data).
