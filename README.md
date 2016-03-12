@@ -2,6 +2,7 @@
 
 These are 3 versions of ELMVIS+ code in Python, all impementing the same `elmvis` function. For details, check my updated paper "ELMVIS+: Fast Nonlinear Visualization Technique based on Cosine Distance and Extreme Learning Machines"
 
+
 ## Installation
 
 Python version needs Numpy and works straight away.
@@ -11,10 +12,8 @@ Cython version (RECOMMENDED) needs Numpy, Cython and some OpenMP installed. Comp
 GPU version requires Numpy, Pycuda and Scikit-CUDA. It works in single and double precision, taking it from matrix X.
 
 
-
 ## Basic usage:
 `elmvis(X, A, slowdown)`
-
 
 Inputs:
 * X: original data (like MNIST digits), an N-times-d matrix where 'N' is number of data samples and 'd' is data dimensionality.
@@ -23,7 +22,6 @@ Inputs:
 
 Returns:
 * the method directly chages rows in X matrix in an optimal way. It can be used several times - improving the results each time.
-
 
 
 ## Advanced usage:
