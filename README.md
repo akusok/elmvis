@@ -1,13 +1,37 @@
-# elmvis
+## elmvis
 
-These are 4 versions of ELMVIS+ code in Python, all impementing the same `elmvis` function. For details, check my paper "ELMVIS+: Improved Nonlinear Visualization Technique using Cosine Distance and Extreme Learning Machines"
+These are 3 versions of ELMVIS+ code in Python, all impementing the same `elmvis` function. For details, check my updated paper "ELMVIS+: Fast Nonlinear Visualization Technique based on Cosine Distance and Extreme Learning Machines"
 
-`Xnew, cossimnew, iters, updates = elmvis(X, A, tol, cossim, maxiter, maxstall, maxupdate, maxtime, report, silent)`
+# Basic usage:
+`elmvis(X, A, tol, slowdown)`
 
 Inputs:
-* X: original data (like MNIST digits), (N*d) matrix where 'N' is number of data samples and 'd' is data dimensionality
+* X: original data (like MNIST digits), an N-times-d matrix where 'N' is number of data samples and 'd' is data dimensionality
 * A: parameter matrix from ELM model (check paper), is (N*N) matrix
-* tol: tolerance of optimization method (like simulated annealing), use a small number or zero
+* tol: tolerance of optimization method (like simulated annealing), default is zero
+* slowdown: stops the method when a number of successful updates per second decreases this much
+
+Returns:
+* the method chages rows in X matrix in an optimal way
+
+
+# Advanced usage:
+`I, info = elmvis(X, A, tol, slowdown, report, maxtime, batch, searchbatch, maxiter, maxupdate, maxstall, cossim, silent)`
+
+Inputs:
+* X: original data (like MNIST digits), an N-times-d matrix where 'N' is number of data samples and 'd' is data dimensionality
+* A: parameter matrix from ELM model (check paper), is (N*N) matrix
+* tol: tolerance of optimization method (like simulated annealing), default is zero
+* slowdown: stops the method when a number of successful updates per second decreases this much
+* report (in seconds): number of seconds between reports of method performance; also `slowdown` is checked only at report
+
+
+Returns:
+* the method chages rows in X matrix in an optimal way
+
+
+
+
 * cossim: initial cosine similarity if available; the function will compute it if not provided. Provide anything non-zero to avoid that computation step
 * maxiter: maximum number of swaps
 * maxstall: maximum average number of swaps between updates, computed on the last 100 updates. Method finishes if no improvement is found within 10*maxstall swaps
