@@ -44,7 +44,7 @@ def run():
     plt.ylim([-2, 2])
     fig = plt.gcf()
     fig.set_size_inches(8, 6)
-    #plt.savefig("img_L%d.pdf" % L, bbox_inches="tight")
+    plt.savefig("plot_mnist.pdf", bbox_inches="tight")
 
     plt.show()
 
