@@ -10,188 +10,168 @@ cimport numpy as np
 cimport cython
 from time import time
 
-
-cdef double getdiff(double *A, double *X, double *AX, long d, long N, long i1, long i2):
-    """Does the same as the C function on top, but without parallelism.
-    """
-    cdef long j, k
-    cdef double xi1, xi2, result=0
-    for j in range(d):
-        xi1 = X[i1*d + j]
-        xi2 = X[i2*d + j]
-        result += (A[i1*N + i1] * (xi2 - xi1) + 2*AX[i1*d + j]) * (xi2 - xi1)
-        result += (A[i2*N + i2] * (xi1 - xi2) + 2*(AX[i2*d + j] + A[i2*N + i1]*(xi2 - xi1))) * (xi1 - xi2)
-    return result
+cdef extern from "pdiff.h":
+    long pdiff(double *A, double *X, double *AX, long *ari1, long *ari2, double tol, double *diff, long *iters, long d, long N, long rep)
 
 
 @cython.boundscheck(False)
-def elmvis(np.ndarray[np.float64_t, ndim=2] X,
+def elmvis(np.ndarray[np.float64_t, ndim=2] Xraw,
            np.ndarray[np.float64_t, ndim=2] A,
-           double tol=1E-9,
-           double cossim=0,
-           long maxiter=1000000,
-           long maxstall=1000,
-           long maxupdate=1000000,
+           double slowdown=10,
+           long report=5,  # in seconds
            long maxtime=24*60*60,
-           long report=1000,
+           long searchbatch=200,
+           double tol=0,
+           long batch=0,
+           long maxiter=0,
+           long maxupdate=0,
+           long maxstall=0,
+           double cossim=0,
            int silent=0):
-    """ELMVIS+ function in Cython, double precision.
+    """ELMVIS+ function in Cython.
     """
+    cdef np.ndarray[np.float64_t, ndim=2] X = Xraw / np.linalg.norm(Xraw, axis=1)[:, None]
+    cdef np.ndarray[np.long_t, ndim=1] I = np.arange(X.shape[0])
+    cdef np.ndarray[np.long_t, ndim=1] tempI
 
     cdef long N = X.shape[0], d = X.shape[1]
-    cdef np.ndarray[np.float64_t, ndim=2] AX = np.dot(A, X)
+    cdef long iters=0, updates=0, stall=0, iopt, updates_last=0, iters_last=0, searchiters, i1, i2
+    cdef double t, t0, t1, tlast, diff, thr, ups, ips, ups_max=0, stop=0
+    cdef np.ndarray[np.float64_t, ndim=2] Xh = np.dot(A, X)
     cdef np.ndarray[np.float64_t, ndim=2] Ai = np.empty((N, 2), dtype=np.float64)
     cdef np.ndarray[np.float64_t, ndim=2] Xi = np.empty((2, d), dtype=np.float64)
-    cdef np.ndarray[np.float64_t, ndim=1] x1 = np.empty(d, dtype=np.float64)
-    cdef np.ndarray[np.float64_t, ndim=1] x2 = np.empty(d, dtype=np.float64)
-    cdef np.ndarray[np.float64_t, ndim=1] delta1 = np.empty(d, dtype=np.float64)
-    cdef np.ndarray[np.float64_t, ndim=1] delta2 = np.empty(d, dtype=np.float64)
-    cdef long stall=0, iters=0, updates=0, nstalls=100, istall=0, i1, i2
-    cdef double diff, t, t0, tlast
-    cdef np.ndarray[np.float64_t, ndim=1] stalls = np.ones((nstalls,), dtype=np.float64)
+    cdef np.ndarray[np.float64_t, ndim=2] x1
+    cdef np.ndarray[np.float64_t, ndim=2] x2
+    cdef np.ndarray[np.float64_t, ndim=2] delta1
+    cdef np.ndarray[np.float64_t, ndim=2] delta2
+    cdef np.ndarray[np.long_t, ndim=1] arri1 = np.ones(searchbatch, dtype=np.int_)
+    cdef np.ndarray[np.long_t, ndim=1] arri2 = np.ones(searchbatch, dtype=np.int_)
 
-    if cossim == 0:
-        cossim = np.trace(X.T.dot(A).dot(X)) / d
-    if not silent: print "original similarity: ", cossim
-    tol = tol*cossim
+    # set default values
+    if cossim <= 0: cossim = np.trace(X.T.dot(A).dot(X)) / N
+    if batch <= 0:
+        batch = int(N*0.01)
+        batch = max(3, batch)
+        batch = min(100, batch)
+    if maxiter <= 0: maxiter = N*N*N
+    if maxupdate <= 0: maxupdate = N*N
+    if maxstall <= 0: maxstall = N*N
 
-    t0 = tlast = time()        
-    while (iters < maxiter) and (stall < maxstall*10):
-        iters = iters + 1
-        stall = stall + 1
+    if not silent:
+        print "original similarity: ", cossim
 
-        # get two different random numbers
-        i1, i2 = np.random.randint(0, N, size=2)
-        while i1 == i2:
-            i1, i2 = np.random.randint(0, N, size=2)
+    t0 = tlast = time()
+    list1 = []
+    list2 = []
 
-        diff = getdiff(&A[0,0], &X[0,0], &AX[0,0], d, N, i1, i2)
-        if diff > -tol * (maxstall * 1.0 / (iters + maxstall)):
-            x1 = X[i1].copy()
-            x2 = X[i2].copy()
-            X[i1] = x2
-            X[i2] = x1
-    
-            delta1 = x2 - x1
-            delta2 = x1 - x2          
-            Ai = A.take((i1, i2), axis=1)
-            Xi = np.vstack((delta2, delta1))
-            AX -= np.dot(Ai, Xi)
- 
-            cossim += diff / d
-            updates += 1
-            if updates > maxupdate:
-                break
+    while (iters < maxiter) and (stall < maxstall):
+        arri1 = np.random.randint(0, N, size=searchbatch)
+        arri2 = np.random.randint(0, N, size=searchbatch)
 
-            stalls[istall] = stall
+        iopt = pdiff(&A[0,0], &X[0,0], &Xh[0,0], <long *>arri1.data, <long *>arri2.data, tol, &diff, &searchiters, d, N, searchbatch)
+        iters += searchiters
+        stall += searchiters
+
+        if iopt > -1:
+            i1 = arri1[iopt]
+            i2 = arri2[iopt]
+            cossim += diff / N
             stall = 0
-            istall = (istall+1) % nstalls
-            if stalls[:updates].mean() > maxstall:
-                break
- 
-        # only report takes current time
-        if iters % report == 0:
+
+            if len(list1) >= batch or i1 in list1 or i1 in list2 or i2 in list1 or i2 in list2:
+                x1 = X.take(list1, axis=0)
+                x2 = X.take(list2, axis=0)
+                X[list1] = x2
+                X[list2] = x1
+
+                tempI = I.take(list1)
+                I[list1] = I[list2]
+                I[list2] = tempI
+
+                delta1 = x2 - x1
+                delta2 = x1 - x2
+                Ai = A.take(np.hstack((list1, list2)), axis=1)
+                Xi = np.vstack((delta2, delta1))
+                Xh -= np.dot(Ai, Xi)
+
+                updates += len(list1)
+                list1 = []
+                list2 = []
+
+                if updates >= maxupdate:
+                    break
+
+            list1.append(i1)
+            list2.append(i2)
+
             t = time()
-            if not silent: print "%d | %d | %.0f iters/min" % (iters, stalls[:updates].mean(), report*60.0/(t-tlast))
-            tlast = t
+            if t - tlast > report:
+                ups = (updates-updates_last)*1.0/(t-tlast)
+                ips = (iters-iters_last)*1.0/(t-tlast)
+                if not silent:
+                    print "%d iters | %d updates | %.0f iters/s | %.0f updates/s | cos similarity = %.4f" % (iters, updates, ips, ups, cossim)
+
+                updates_last = updates
+                iters_last = iters
+                tlast = t
+                ups_max = max(ups, ups_max)
+                if ups < ups_max/slowdown:
+                    break
+
             if t - t0 > maxtime:
                 break
 
-    if not silent: print "final similarity: ", cossim
-    return X, cossim, iters, updates
+    ips = iters*1.0/(time()-t0)
+
+    # apply last batch update at exit
+    if len(list1) > 0:
+        x1 = X.take(list1, axis=0)
+        x2 = X.take(list2, axis=0)
+        X[list1] = x2
+        X[list2] = x1
+
+        tempI = I.take(list1)
+        I[list1] = I[list2]
+        I[list2] = tempI
+
+        delta1 = x2 - x1
+        delta2 = x1 - x2
+        Ai = A.take(np.hstack((list1, list2)), axis=1)
+        Xi = np.vstack((delta2, delta1))
+        Xh -= np.dot(Ai, Xi)
+
+        updates += len(list1)
+
+    ups = updates*1.0/(time()-t0)
+    Xraw[:] = Xraw[I]
+
+    cossim = np.trace(X.T.dot(A).dot(X)) / N
+    if not silent:
+        print "final similarity: ", cossim
+
+    info = {'cossim': cossim, 'iters': iters, 'updates': updates, 'ips': ips, 'ups': ups}
+    return I, info
 
 
-###############################################################################
-### same but 32-bit ###
-
-cdef double getdiff32(float *A, float *X, float *AX, long d, long N, long i1, long i2):
-    """Does the same as the C function on top, but without parallelism.
-    """
-    cdef long j, k
-    cdef float xi1, xi2
-    cdef double result=0
-    for j in range(d):
-        xi1 = X[i1*d + j]
-        xi2 = X[i2*d + j]
-        result += (A[i1*N + i1] * (xi2 - xi1) + 2*AX[i1*d + j]) * (xi2 - xi1)
-        result += (A[i2*N + i2] * (xi1 - xi2) + 2*(AX[i2*d + j] + A[i2*N + i1]*(xi2 - xi1))) * (xi1 - xi2)
-    return result
 
 
-@cython.boundscheck(False)
-def elmvis32(np.ndarray[np.float32_t, ndim=2] X,
-           np.ndarray[np.float32_t, ndim=2] A,
-           float tol=1E-9,
-           float cossim=0,
-           long maxiter=1000000,
-           long maxstall=1000,
-           long maxupdate=1000000,
-           long maxtime=24*60*60,
-           long report=1000,
-           int silent=0):
-    """ELMVIS+ function in Cython, single precision.
-    """
 
-    cdef long N = X.shape[0], d = X.shape[1]
-    cdef np.ndarray[np.float32_t, ndim=2] AX = np.dot(A, X)
-    cdef np.ndarray[np.float32_t, ndim=2] Ai = np.empty((N, 2), dtype=np.float32)
-    cdef np.ndarray[np.float32_t, ndim=2] Xi = np.empty((2, d), dtype=np.float32)
-    cdef np.ndarray[np.float32_t, ndim=1] x1 = np.empty(d, dtype=np.float32)
-    cdef np.ndarray[np.float32_t, ndim=1] x2 = np.empty(d, dtype=np.float32)
-    cdef np.ndarray[np.float32_t, ndim=1] delta1 = np.empty(d, dtype=np.float32)
-    cdef np.ndarray[np.float32_t, ndim=1] delta2 = np.empty(d, dtype=np.float32)
-    cdef long stall=0, iters=0, updates=0, nstalls=100, istall=0, i1, i2
-    cdef double diff, t, t0, tlast
-    cdef np.ndarray[np.float32_t, ndim=1] stalls = np.ones((nstalls,), dtype=np.float32)
 
-    if cossim == 0:
-        cossim = np.trace(X.T.dot(A).dot(X)) / d
-    if not silent: print "original similarity: ", cossim
-    tol = tol*cossim
 
-    t0 = tlast = time()        
-    while (iters < maxiter) and (stall < maxstall*10):
-        iters = iters + 1
-        stall = stall + 1
 
-        # get two different random numbers
-        i1, i2 = np.random.randint(0, N, size=2)
-        while i1 == i2:
-            i1, i2 = np.random.randint(0, N, size=2)
 
-        diff = getdiff32(&A[0,0], &X[0,0], &AX[0,0], d, N, i1, i2)
-        if diff > -tol * (maxstall * 1.0 / (iters + maxstall)):
-            x1 = X[i1].copy()
-            x2 = X[i2].copy()
-            X[i1] = x2
-            X[i2] = x1
-    
-            delta1 = x2 - x1
-            delta2 = x1 - x2          
-            Ai = A.take((i1, i2), axis=1)
-            Xi = np.vstack((delta2, delta1))
-            AX -= np.dot(Ai, Xi)
- 
-            cossim += diff / d
-            updates += 1
-            if updates > maxupdate:
-                break
 
-            stalls[istall] = stall
-            stall = 0
-            istall = (istall+1) % nstalls
-            if stalls[:updates].mean() > maxstall:
-                break
- 
-        # only report takes current time
-        if iters % report == 0:
-            t = time()
-            if not silent: print "%d | %d | %.0f iters/min" % (iters, stalls[:updates].mean(), report*60.0/(t-tlast))
-            tlast = t
-            if t - t0 > maxtime:
-                break
-    if not silent: print "final similarity: ", cossim
-    return X, cossim, iters, updates
+
+
+
+
+
+
+
+
+
+
+
 
 
 

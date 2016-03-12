@@ -9,35 +9,47 @@ import numpy as np
 from time import time
 
 
-def elmvis(X, A, tol=1E-9, cossim=None,
-           maxiter=1000000,
-           maxstall=1000,
-           maxupdate=1000000,
+def elmvis(Xraw,
+           A,
+           slowdown=10,
+           report=5,
            maxtime=24*60*60,
-           report=1000,
+           tol=0,
+           batch=None,
+           maxiter=None,
+           maxupdate=None,
+           maxstall=None,
+           cossim=None,
            silent=False):
-    """ELMVIS+ function.
-    """
-
+    X = Xraw / np.linalg.norm(Xraw, axis=1)[:, None]  # unit-length version of X
+    Xh = np.dot(A, X)  # X_hat, predicted value of X
     N, d = X.shape
-    if cossim is None:
-        cossim = np.trace(X.T.dot(A).dot(X)) / d
-    if not silent: print "original similarity: ", cossim
-    tol = tol*cossim
+    I = np.arange(N)  # index of samples
 
-    AX = np.dot(A, X)
+    # set default values
+    if cossim is None: cossim = np.trace(X.T.dot(A).dot(X)) / N
+    if batch is None:  # take 1% as a batch
+        batch = int(N*0.01)
+        batch = max(3, batch)
+        batch = min(100, batch)
+    if maxiter is None: maxiter = N*N*N
+    if maxupdate is None: maxupdate = N*N
+    if maxstall is None: maxstall = N*N
 
-    stall = 0
-    iters = 0
-    updates = 0
+    if not silent:
+        print "original similarity: ", cossim
+
     t0 = tlast = time()
+    list1 = []
+    list2 = []
+    iters = 0
+    stall = 0
+    updates = 0
+    updates_last = 0
+    iters_last = 0
+    ups_max = 0
 
-    # track a list of last "nstalls" updates, get their mean
-    nstalls = 100
-    stalls = np.ones((nstalls,))
-    istall = 0
-
-    while (iters < maxiter) and (stall < maxstall*10):
+    while (iters < maxiter) and (stall < maxstall):
         iters += 1
         stall += 1
 
@@ -50,37 +62,89 @@ def elmvis(X, A, tol=1E-9, cossim=None,
         x2 = X[i2, :].copy()
         delta1 = x2 - x1
         delta2 = x1 - x2
-        diff = A[i1,i1]*np.sum(delta1**2) + 2*np.sum(AX[i1]*delta1) +\
-               A[i2,i2]*np.sum(delta2**2) + 2*np.sum(AX[i2]*delta2) + 2*A[i2,i1]*np.sum(delta1*delta2)
+        diff = A[i1,i1]*np.sum(delta1**2) + 2*np.sum(Xh[i1]*delta1) +\
+               A[i2,i2]*np.sum(delta2**2) + 2*np.sum(Xh[i2]*delta2) +\
+             2*A[i2,i1]*np.sum(delta1*delta2)
 
-        if diff > -tol * (maxstall * 1.0 / (iters + maxstall)):
-            X[i1] = x2
-            X[i2] = x1
-            Ai = A[:, (i1, i2)]
-            Deltas = np.vstack((delta2, delta1))
-            AX -= np.dot(Ai, Deltas)
-
-            cossim += diff / d
-            updates += 1
-            if updates > maxupdate:
-                break
-
-            stalls[istall] = stall
+        if diff > tol:  # if found successful swap
+            cossim += diff / N
             stall = 0
-            istall = (istall+1) % nstalls
-            if stalls[:updates].mean() > maxstall:
-                break
 
-        # only report takes current time
-        if iters % report == 0:
-            t = time()
-            if not silent: print "%d | %d | %.0f iters/min" % (iters, stalls[:updates].mean(), report*60.0/(t-tlast))
+            if len(list1) >= batch or i1 in list1 or i1 in list2 or i2 in list1 or i2 in list2:  # apply batch
+                x1 = X.take(list1, axis=0)
+                x2 = X.take(list2, axis=0)
+                X[list1] = x2
+                X[list2] = x1
+
+                tempI = I.take(list1)
+                I[list1] = I[list2]
+                I[list2] = tempI
+
+                delta1 = x2 - x1
+                delta2 = x1 - x2
+                Ai = A.take(np.hstack((list1, list2)), axis=1)
+                Xi = np.vstack((delta2, delta1))
+                Xh -= np.dot(Ai, Xi)
+
+                updates += len(list1)
+                list1 = []
+                list2 = []
+
+                if updates >= maxupdate:
+                    break
+
+            list1.append(i1)
+            list2.append(i2)
+
+        t = time()
+        if t - tlast > report:
+            ups = (updates-updates_last)*1.0/(t-tlast)
+            ips = (iters-iters_last)*1.0/(t-tlast)
+            if not silent:
+                print "%d iters | %d updates | %.0f iters/s | %.0f updates/s | cos similarity = %.4f" % (iters, updates, ips, ups, cossim)
+
+            updates_last = updates
+            iters_last = iters
             tlast = t
-            if t - t0 > maxtime:
+            ups_max = max(ups, ups_max)
+            if ups < ups_max/slowdown:
                 break
 
-    if not silent: print "final similarity: ", cossim
-    return X, cossim, iters, updates
+        if t - t0 > maxtime:
+            break
+
+
+    ips = iters*1.0/(time()-t0)
+
+    # apply last batch update at exit
+    if len(list1) > 0:
+        x1 = X.take(list1, axis=0)
+        x2 = X.take(list2, axis=0)
+        X[list1] = x2
+        X[list2] = x1
+
+        tempI = I.take(list1)
+        I[list1] = I[list2]
+        I[list2] = tempI
+
+        delta1 = x2 - x1
+        delta2 = x1 - x2
+        Ai = A.take(np.hstack((list1, list2)), axis=1)
+        Xi = np.vstack((delta2, delta1))
+        Xh -= np.dot(Ai, Xi)
+
+        updates += len(list1)
+
+    ups = updates*1.0/(time()-t0)
+    Xraw[:] = Xraw[I]
+
+    cossim = np.trace(X.T.dot(A).dot(X)) / N
+    if not silent:
+        print "final similarity: ", cossim
+
+    info = {'cossim': cossim, 'iters': iters, 'updates': updates, 'ips': ips, 'ups': ups}
+    return I, info
+
 
 
 

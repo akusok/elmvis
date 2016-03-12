@@ -10,6 +10,10 @@
 # Setuptools distribution folder
 /dist/
 /build/
+/elmvisc_mkl_slow/
+/elmvis_fastidx
+/elmvis_GA
+/elmvis_hybrid
 
 # Python egg metadata, regenerated from source files by setuptools
 /*.egg-info

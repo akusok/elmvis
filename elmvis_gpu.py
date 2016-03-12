@@ -14,21 +14,33 @@ from skcuda import linalg
 from pycuda.compiler import SourceModule
 
 
-def elmvis(X, A, tol=1E-9, cossim=None,
-           maxiter=1000000,
-           maxstall=1000,
-           maxupdate=1000000,
+def elmvis(Xraw,
+           A,
+           slowdown=10,
+           report=5,
            maxtime=24*60*60,
-           report=1000,
+           tol=0,
+           batch=None,
+           maxiter=None,
+           maxupdate=None,
+           maxstall=None,
+           cossim=None,
            silent=False):
     """ELMVIS+ function running in GPU memory.
     """
-
+    X = Xraw / np.linalg.norm(Xraw, axis=1)[:, None]  # unit-length version of X
+    Xh = np.dot(A, X)  # X_hat, predicted value of X
     N, d = X.shape
-    if cossim is None:
-        cossim = np.trace(X.T.dot(A).dot(X)) / d
-    if not silent: print "original similarity: ", cossim
-    tol = tol*cossim
+    I = np.arange(N)  # index of samples
+
+    # set default values
+    if cossim is None: cossim = np.trace(X.T.dot(A).dot(X)) / N
+    if maxiter is None: maxiter = N*N*N
+    if maxupdate is None: maxupdate = N*N
+    if maxstall is None: maxstall = N*N
+
+    if not silent:
+        print "original similarity: ", cossim
 
     # init GPU
     dt = X.dtype.type
@@ -39,12 +51,12 @@ def elmvis(X, A, tol=1E-9, cossim=None,
     devA = gpuarray.to_gpu(A.astype(dt))
     devX = gpuarray.to_gpu(X.astype(dt))
     devXi1 = gpuarray.empty((d,), dtype=dt)
-    devAX = linalg.dot(devA, devX)
+    devXh = linalg.dot(devA, devX)
     devAi = gpuarray.empty((N, 2), dtype=dt)
     devDelta = gpuarray.empty((2, d), dtype=dt)
     result = gpuarray.empty((d,), dtype=dt)
 
-    # fast kernel for a better solution search
+    # swap kernel
     kernel = """
         __global__ void diff(%s *A, %s *Y, %s *AY, %s *result, long d, long N, long i1, long i2) {
             long j = blockDim.x * blockIdx.x + threadIdx.x;
@@ -64,17 +76,15 @@ def elmvis(X, A, tol=1E-9, cossim=None,
     block = result._block
     grid = (int(np.ceil(1.0 * result.shape[0] / block[0])), 1)
 
+    t0 = tlast = time()
     stall = 0
     iters = 0
     updates = 0
-    t0 = tlast = time()
+    updates_last = 0
+    iters_last = 0
+    ups_max = 0
 
-    # track a list of last "nstalls" updates, get their mean
-    nstalls = 100
-    stalls = np.ones((nstalls,))
-    istall = 0
-
-    while (iters < maxiter) and (stall < maxstall*10):
+    while (iters < maxiter) and (stall < maxstall):
         iters += 1
         stall += 1
 
@@ -83,42 +93,57 @@ def elmvis(X, A, tol=1E-9, cossim=None,
         while i1 == i2:
             i1, i2 = np.random.randint(0, N, size=2)
 
-        dev_diff.prepared_call(grid, block, devA.gpudata, devX.gpudata, devAX.gpudata, result.gpudata, d, N, i1, i2)
+        dev_diff.prepared_call(grid, block, devA.gpudata, devX.gpudata, devXh.gpudata, result.gpudata, d, N, i1, i2)
         diff = np.sum(result.get())
 
-        if diff > -tol * (maxstall * 1.0 / (iters + maxstall)):
+        if diff > tol:
+            stall = 0
             devAi[:, 0] = devA[:, i1]
             devAi[:, 1] = devA[:, i2]
             devDelta[0, :] = devX[i1, :] - devX[i2, :]
             devDelta[1, :] = devX[i2, :] - devX[i1, :]
-            linalg.add_dot(devAi, devDelta, devAX, alpha=-1)
+            linalg.add_dot(devAi, devDelta, devXh, alpha=-1)
+
+            tI = I[i1]
+            I[i1] = I[i2]
+            I[i2] = tI
 
             devXi1[:] = devX[i1, :]
             devX[i1] = devX[i2]
             devX[i2] = devXi1
 
-            cossim += diff / d
+            cossim += diff / N
             updates += 1
             if updates > maxupdate:
                 break
 
-            stalls[istall] = stall
-            stall = 0
-            istall = (istall+1) % nstalls
-            if stalls[:updates].mean() > maxstall:
-                break
+        t = time()
+        if t - tlast > report:
+            ups = (updates-updates_last)*1.0/(t-tlast)
+            ips = (iters-iters_last)*1.0/(t-tlast)
+            if not silent:
+                print "%d iters | %d updates | %.0f iters/s | %.0f updates/s | cos similarity = %.4f" % (iters, updates, ips, ups, cossim)
 
-        # only report takes current time
-        if iters % report == 0:
-            t = time()
-            if not silent: print "%d | %d | %.0f iters/min" % (iters, stalls[:updates].mean(), report*60.0/(t-tlast))
+            updates_last = updates
+            iters_last = iters
             tlast = t
-            if t - t0 > maxtime:
+            ups_max = max(ups, ups_max)
+            if ups < ups_max/slowdown:
                 break
 
-    X = devX.get()
-    if not silent: print "final similarity: ", cossim
-    return X, cossim, iters, updates
+        if t - t0 > maxtime:
+            break
+
+    ips = iters*1.0/(time()-t0)
+    ups = updates*1.0/(time()-t0)
+    Xraw[:] = Xraw[I]
+
+    cossim = np.trace(X.T.dot(A).dot(X)) / N
+    if not silent:
+        print "final similarity: ", cossim
+
+    info = {'cossim': cossim, 'iters': iters, 'updates': updates, 'ips': ips, 'ups': ups}
+    return I, info
 
 
 

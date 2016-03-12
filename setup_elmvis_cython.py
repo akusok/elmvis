@@ -11,8 +11,11 @@ from Cython.Distutils import build_ext
 import numpy
 
 ext_modules = [Extension("elmvis_cython",
-                         ["elmvis_cython.pyx"],
-                         include_dirs=[numpy.get_include()])]
+                         sources=["elmvis_cython.pyx", "pdiff.c"],
+                         extra_link_args=[],
+                         extra_compile_args=['-fopenmp'],
+                         include_dirs=[numpy.get_include()],
+                         )]
 
 setup(
   name = 'ELMVIS+ cython app',
