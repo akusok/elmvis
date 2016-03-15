@@ -13,7 +13,7 @@ import numpy
 ext_modules = [Extension("elmvis_cython",
                          sources=["elmvis_cython.pyx", "pdiff.c"],
                          extra_link_args=[],
-                         extra_compile_args=['-fopenmp'],
+                         compile_args=['-fopenmp'],
                          include_dirs=[numpy.get_include()],
                          )]
 

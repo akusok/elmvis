@@ -1,13 +1,22 @@
 # ELMVIS+
 
-These are 3 versions of ELMVIS+ code in Python, all impementing the same `elmvis` function. For details, check my updated paper "ELMVIS+: Fast Nonlinear Visualization Technique based on Cosine Distance and Extreme Learning Machines"
+These are 3 versions of ELMVIS+ code in Python, all impementing the same `elmvis` function. 
+
+For details, check (and cite :-) my updated paper "ELMVIS+: Fast Nonlinear Visualization Technique based on Cosine Distance and Extreme Learning Machines"
+
+@article{elmvisplus,
+  author = {Akusok, Anton and Baek, Stephen and Miche, Yoan and Bj\"{o}rk, Kaj-Mikael and Nian, Rui and Lauren, Paula and Lendasse, Amaury},
+  journal = {Neurocomputing},
+  title = {{ELMVIS+: Fast Nonlinear Visualization Technique based on Cosine Distance and Extreme Learning Machines}},
+  year = "forthcoming 2016"
+}
 
 
 ## Installation
 
 Python version needs Numpy and works straight away.
 
-Cython version (RECOMMENDED) needs Numpy, Cython and some OpenMP installed. Compile it with `python setup_elmvis_cython.py build_ext --inplace` to get `elmvis_cython.so` library. You can later import function from this library as `from elmvis_cython import elmvis`.
+Cython version (RECOMMENDED) needs Numpy, Cython and some OpenMP installed. Compile it with `python setup.py build_ext --inplace` to get `elmvis_cython.so` library. You can later import function from this library as `from elmvis_cython import elmvis`. Mac OS X ignores OpenMP flag, but still compiles its own parallel version of code (tested in OS X El Capitan).
 
 GPU version requires Numpy, Pycuda and Scikit-CUDA. It works in single and double precision, taking it from matrix X.
 

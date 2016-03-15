@@ -1,14 +1,17 @@
 #include <stdbool.h>
-#include <omp.h>
+#ifndef __APPLE__
+    #include <omp.h>
+#endif
 
 long pdiff(double *A, double *X, double *AX, long *ari1, long *ari2, double tol, double *diff, long *iters, long d, long N, long rep)
 {
     long r, j, i1, i2, iopt=-1, myiters=0;
     double xi1, xi2, diff1;
     bool done = false;
-    //omp_set_num_threads(2);
 
-    #pragma omp parallel for shared(X, A, d, N, iopt) private(r, j, i1, i2, xi1, xi2, diff1) reduction(|:done) reduction(+:myiters)
+    #ifndef __APPLE__
+        #pragma omp parallel for shared(X, A, d, N, iopt) private(r, j, i1, i2, xi1, xi2, diff1) reduction(|:done) reduction(+:myiters)
+    #endif
     for (r = 0; r < rep; r++)
     {
         i1 = ari1[r];
@@ -25,11 +28,16 @@ long pdiff(double *A, double *X, double *AX, long *ari1, long *ari2, double tol,
         if (diff1 > tol)
         {
             done = true;
-            #pragma omp critical
-            {
+            #ifndef __APPLE__
+                #pragma omp critical
+                {
+                    *diff = diff1;
+                    iopt = r;
+                }
+            #else
                 *diff = diff1;
                 iopt = r;
-            }
+            #endif
         }
         if (done) r = rep;
     }
